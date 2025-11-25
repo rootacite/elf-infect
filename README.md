@@ -1,8 +1,3 @@
-<<<<<<< HEAD
-# elf-infect
-
-Flat Binary Code Generation Framework
-=======
 # ELF感染技术前置－独立的动态加载代码块
 
 - [ELF感染技术前置－独立的动态加载代码块](#elf感染技术前置独立的动态加载代码块)
@@ -457,4 +452,3 @@ From x86-64: Booting.... Pid: 336523.
 [6] http://www.staroceans.org/e-book/LinkersAndLoaders.pdf \
 [7] https://refspecs.linuxbase.org/elf/gabi4+/ch4.reloc.html
 
->>>>>>> 1c4ff5f ([doc] init commit)
