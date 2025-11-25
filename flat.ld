@@ -11,7 +11,7 @@ SECTIONS
     . = 0;
 
     .text : {
-        *(.init*)
+        *(.init)
         *(.text*)
     } : flat
 

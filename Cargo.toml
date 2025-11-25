@@ -1,0 +1,15 @@
+[package]
+name = "carrier"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+bytemuck = {version = "1.24.0", features = ["derive"] }
+goblin = "0.10.3"
+memmap2 = "0.9.9"
+ouroboros = "0.18.5"
+
+[[bin]]
+name = "carrier"
+path = "src/rust/infect.rs"
