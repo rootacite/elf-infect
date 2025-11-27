@@ -8,13 +8,14 @@
             "name": "Launch",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceRoot}/flat",
-            "args": [],
+            "program": "${workspaceRoot}/ssh_infected",
+            "args": ["./lsd"],
             "cwd": "${workspaceRoot}",
             "sourceMap" : {
                 "/home/acite/AsmProjects/elf-infect/src": "${workspaceRoot}/src"
             },
             "preRunCommands": [
+                
             ]
         }
     ]
