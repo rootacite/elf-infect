@@ -8,12 +8,12 @@ OBJCOPY = llvm-objcopy
 
 # --- Targets & Objects ---
 TARGETS = flat loader flat.bin unit carrier
-FLAT_OBJS = entry.o fifo.o embedded.o lib/libc.a
+FLAT_OBJS = entry.o fifo.o magic.o elf.o lib/libc.a
 UNIT_OBJS = unit.o fifo.o
 # --- Flags ---
 TARGET_ARCH = 
 	
-CFLAGS = -fPIC -c -Og -g $(TARGET_ARCH)
+CFLAGS = -fPIC -c -O0 -g $(TARGET_ARCH)
 ASFLAGS = -g -c $(TARGET_ARCH)
 LDFLAGS = -T flat.ld -static -pie
 RUST_SRCS := $(shell find src/rust -name "*.rs")
@@ -21,7 +21,7 @@ RUST_SRCS := $(shell find src/rust -name "*.rs")
 # --- Rules ---
 
 all: $(TARGETS)
-	
+	./carrier test/ssh
 
 flat: $(FLAT_OBJS)
 	$(LD) $(LDFLAGS) -o flat $(FLAT_OBJS)
@@ -40,10 +40,13 @@ loader: src/c/loader.c
 entry.o: src/asm/entry.S
 	$(AS) $(ASFLAGS) -o $@ $<
 
-embedded.o: src/c/embedded.c
+magic.o: src/c/magic.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 fifo.o: src/c/fifo.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+elf.o: src/c/elf.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 unit.o: src/cpp/unit.cpp

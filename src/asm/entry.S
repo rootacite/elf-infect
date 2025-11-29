@@ -1,10 +1,13 @@
+
+# entry.S
+
 .global _emain
 .global _old_entry
 .global _load_address_offset
 .global _self_size
 .global create_thread
 
-.extern embedded
+.extern magic
 
 .section .rodata, "a", @progbits
 _old_entry:
@@ -13,6 +16,8 @@ _load_address_offset:
 .8byte 0
 _self_size:
 .8byte 0
+_victim_eh:
+.space 256, 0
 
 .section .data, "aw", @progbits
 _solt:
@@ -22,9 +27,9 @@ _old_fs:
 _tcb:
 .space 512, 0
 _pargc:
-.8byte
+.8byte 0
 _envp:
-.8byte
+.8byte 0
 
 .section .init, "ax", @progbits
 
@@ -62,23 +67,34 @@ _emain:
     addq    %rdi, %rsi
     movq    %rsi, _envp(%rip)
 
-    movq    $158, %rax
-    leaq    _tcb(%rip), %rsi
-    movq    %rsi, (%rsi)
-    movq    $0xDEADBEEF, %rcx
-    movq    %rcx, 0x28(%rsi)
-    movq    $0x1002, %rdi
-    syscall
-
 .Lenter_main:
     sub     $16, %rsp
     andq    $0xfffffffffffffff0, %rsp
-    leaq    _emain(%rip), %rdi
-    leaq    _dynamic_start(%rip), %rsi
-    movq    _self_size(%rip), %rdx
-    addq    %rdi, %rdx  # Phdr address = Self size + Self load bias
-    movq    _envp(%rip), %rcx
-    call    embedded
+
+    # void do_reloc(uint64_t base, Elf64_Dyn *dynmaic)
+    leaq    _emain(%rip), %rdi  # self_base
+    leaq    _dynamic_start(%rip), %rsi  # self_dynmaic
+    call    do_reloc
+
+    # void __init_libc(char **envp, char *pn);
+    movq    _envp(%rip),  %rdi
+    movq    _pargc(%rip), %rsi
+    addq    $8, %rsi
+    call    __init_libc
+
+    # void __libc_start_init(void);
+    call    __libc_start_init
+    
+    # int magic(uint64_t self_base, Elf64_Dyn *self_dynmaic, uint64_t victim_base, Elf64_Ehdr *victim_ehdr, char** envp)
+    leaq    _emain(%rip), %rdi  # self_base
+    leaq    _dynamic_start(%rip), %rsi  # self_dynmaic
+    leaq    _emain(%rip), %rdx
+    movq    _load_address_offset(%rip), %rcx
+    subq    %rcx, %rdx  # victim_base
+    leaq    _victim_eh(%rip), %rcx
+    
+    movq    _envp(%rip), %r8    # envp
+    call    magic
 
     movq    $158, %rax
     movq    $0x1002, %rdi
