@@ -21,7 +21,6 @@ RUST_SRCS := $(shell find src/rust -name "*.rs")
 # --- Rules ---
 
 all: $(TARGETS)
-	./carrier test/ssh
 
 flat: $(FLAT_OBJS)
 	$(LD) $(LDFLAGS) -o flat $(FLAT_OBJS)
